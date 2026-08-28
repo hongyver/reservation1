@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  tennis-reservation:
+    # 빌드 컨텍스트는 레포 루트 — config.py·reservation_*.py 가 거기 있다
+    build:
+      context: ..
+      dockerfile: api-server/Dockerfile
+    container_name: tennis-reservation
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    environment:
+      - TZ=Asia/Seoul
+    # 설정(계정·예약 조건)을 외부에서 수정하려면 아래 주석 해제
+    volumes:
+      - /volume1/docker/apiserver/app/accounts.txt:/app/accounts.txt:ro
+      - /volume1/docker/apiserver/app/config.toml:/app/config.toml:ro

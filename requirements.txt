@@ -1,0 +1,13 @@
+# HTTP 기반 (n8n/서버용 - 브라우저 불필요)
+flask>=3.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+aiohttp>=3.9.0
+
+# 브라우저 기반 (로컬 PC용 - 선택사항)
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+
+# 예약 현황 뷰어
+holidays>=0.100     # 공휴일 수요 계산
+tomlkit>=0.13.0     # config.toml 주석 보존 저장 (읽기는 표준 tomllib)

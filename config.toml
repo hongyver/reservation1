@@ -1,0 +1,88 @@
+# 고양시 대화문화체육센터 테니스장 자동 예약 설정
+#
+# 이 파일 하나가 모든 설정을 담는다. (예전의 .env / accounts.txt / config.py 하드코딩을 대체)
+# 실제로 쓸 때는 config.toml 로 복사해 값을 채운다:
+#
+#     cp config.example.toml config.toml
+#
+# config.toml 에는 계정 비밀번호가 들어가므로 git 에 커밋하지 않는다 (.gitignore 등록됨).
+
+
+# ─── 예약 오픈 시각 ──────────────────────────────────────────────────────────
+[schedule]
+day    = 25          # 매월 예약 오픈일. 0 = 날짜 무관 즉시 실행
+hour   = 10
+minute = 0
+
+login_advance_minutes = 10   # 오픈 몇 분 전부터 로그인을 시작할지
+slots_per_account     = 4    # viewer.py 재배치 시 계정당 배정할 슬롯 수 (1~10)
+
+
+# ─── 사이트 상수 ─────────────────────────────────────────────────────────────
+# 사이트가 바뀌지 않는 한 건드릴 일이 없다.
+# court_value_map 은 정각 크리티컬 경로에서 그대로 서버에 전송되는 값이다.
+# 잘못 고치면 예약이 전건 실패한다 (POSTMORTEM_20260825.md 참고).
+[site]
+main_url             = "https://daehwa.gys.or.kr:451"
+reservation_url      = "https://daehwa.gys.or.kr:451/rent/tennis_rent.php"
+all_courts           = [1, 2, 3, 4]
+available_hours      = [6, 8, 10, 12, 14, 16, 18, 20]   # 2시간 단위 시작 시각
+search_default_hours = [6, 8, 10]                       # 빈자리 검색 기본 시간대
+
+[site.court_value_map]   # 코트 번호 → 사이트 내부 value
+"1" = "2"
+"2" = "7"
+"3" = "8"
+"4" = "9"
+
+
+# ─── HTTP / 재시도 ───────────────────────────────────────────────────────────
+[network]
+max_concurrent = 10   # 동시에 실행할 예약 세션 수
+
+# 정각에는 서버 accept 큐가 포화되어 TCP 연결 수립 자체가 느려진다.
+# (2026-08-25 실측: connect 5초 초과로 GET 76건·proc 22건이 끊겼고, 응답을 받은
+#  proc 은 9.9~27.6초 걸렸다. 짧게 끊고 재시도하면 새 핸드셰이크가 큐 뒤로
+#  밀려 오히려 손해다 — 기다리는 편이 낫다.)
+connection_timeout = 15
+read_timeout       = 30
+
+# 비-크리티컬 경로(로그인·검색) 재시도 — 여유 있는 시간대라 넉넉히 둔다
+max_retries     = 10
+retry_delay_min = 0.1
+retry_delay_max = 1.0
+
+# 정각 크리티컬 경로(apply/proc) 재시도 — 단일 IP 요청 폭주로 인한
+# 서버 차단(자폭)을 막기 위해 총량을 작게 유지한다
+submit_max_attempts  = 3     # submit_reservation 외부 재시도
+critical_max_retries = 2     # apply/proc 요청당 재시도
+retry_backoff_base   = 0.2   # 지수 백오프 기준(초): base * 2^n
+retry_backoff_max    = 2.0   # 지수 백오프 상한(초)
+
+# 정각 발사 지터 상한 ms. 0 = 지터 없이 정각 즉시 발사 (기본, 최고 속도).
+# 한 IP에서 세션을 많이 열어 동시 폭주가 걱정될 때만 올린다 (예: 150).
+fire_jitter_ms = 0
+
+session_retry_total   = 3    # urllib3 소켓 레벨 재시도 횟수
+session_retry_backoff = 0.5  # urllib3 재시도 백오프 계수
+session_pool_size     = 10   # 연결 풀 크기
+
+
+# ─── 브라우저 모드 (--browser) ───────────────────────────────────────────────
+[browser]
+headless             = false   # false = 예약 확인을 위해 창 표시
+page_load_timeout    = 30
+element_wait_timeout = 10
+
+
+# ─── API 서버 (api_server.py) ────────────────────────────────────────────────
+[api]
+host = "0.0.0.0"
+port = 5000
+
+
+# ─── 다중 계정 런처 (main.py) ────────────────────────────────────────────────
+[launcher]
+# 터미널 창 하나에 넣을 계정 수. tmux 2×2 / iTerm2 split 레이아웃이 4분할까지만
+# 지원하므로 1~4만 허용한다 (초과하면 나머지 계정이 조용히 실행되지 않는다).
+group_size = 4

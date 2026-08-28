@@ -1,0 +1,65 @@
+# 민감 정보 — 비밀번호는 accounts.txt 에만 있다
+accounts.txt
+accounts.txt.bak*
+credentials.txt
+
+# 구 설정 파일 (더 이상 읽지 않지만 디스크에 남아 있다 — 비밀번호 포함)
+.env
+.env.bak
+.env.bak.*
+
+# 이번 회차 예약 계획 (비밀번호는 없지만 아이디가 들어간다)
+reservation.json
+reservation.json.bak.*
+
+# config.toml 은 비밀 정보가 없어 커밋한다 (실행 파라미터만)
+config.toml.bak.*
+
+# Claude Code 로컬 설정
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Backup
+backup/
+
