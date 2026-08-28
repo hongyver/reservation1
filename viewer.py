@@ -15,6 +15,7 @@ config.toml의 다중 계정 예약 정보를 달력 형태로 브라우저에 �
 
 import json
 import sys
+import tempfile
 import threading
 import webbrowser
 from datetime import datetime
@@ -1285,8 +1286,14 @@ def main():
     # (재빌드 실패 시 fallback으로도 사용)
     _HTML_CONTENT = html
 
-    # fallback: file로도 저장
-    Path("/tmp/tennis_viewer.html").write_text(html, encoding="utf-8")
+    # fallback: file로도 저장 (디버깅용)
+    # "/tmp" 하드코딩은 Windows에서 현재 드라이브 루트로 해석돼 FileNotFoundError 가 난다.
+    # 서버는 이미 떠 있으므로 이 파일 저장 실패로 뷰어가 죽지는 않게 한다.
+    fallback_path = Path(tempfile.gettempdir()) / "tennis_viewer.html"
+    try:
+        fallback_path.write_text(html, encoding="utf-8")
+    except OSError as e:
+        print(f"[viewer] fallback HTML 저장 건너뜀: {e}")
 
     total_res = sum(len(a["reservations"]) for a in accounts)
     print(f"[viewer] 계정 {len(accounts)}개 / 예약 총 {total_res}건")

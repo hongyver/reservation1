@@ -582,13 +582,22 @@ def run_background_fallback(accounts, extra_flags, detach=False):
     """
     print(f"[launch] {len(accounts)}개 계정을 백그라운드로 실행합니다.")
     LOGS_DIR.mkdir(exist_ok=True)
+
+    # 로그 파일 인코딩을 UTF-8 로 고정한다. Windows 에서는 stdout 이 파이프/파일일 때
+    # 기본이 cp949 라, 워커가 찍는 em dash("—") 같은 문자에서 UnicodeEncodeError 로
+    # 죽는다 — 하필 그 자리가 proc.php 의 "알 수 없는 응답" 경고문이다.
+    worker_env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
     procs = []
     for a in accounts:
-        cmd = [sys.executable, str(RESERVE_PY), "--account", a["user_id"]] + extra_flags
+        # -u : stdout 을 파일로 붙이면 파이썬이 블록 버퍼링으로 바뀌어,
+        #      프로세스가 끝날 때까지 로그가 0바이트로 남는다. 정각 진행을
+        #      실시간으로 봐야 하고, terminate 시 버퍼째 유실되면 안 된다.
+        cmd = [sys.executable, "-u", str(RESERVE_PY), "--account", a["user_id"]] + extra_flags
         log_path = LOGS_DIR / f"{a['user_id']}.log"
         with open(log_path, "w") as log_f:
             proc = subprocess.Popen(cmd, stdout=log_f, stderr=subprocess.STDOUT,
-                                    start_new_session=detach)
+                                    start_new_session=detach, env=worker_env)
         procs.append((a, proc, log_path))
         print(f"  [{a['no']:2d}] {a['user_id']}: PID {proc.pid} → logs/{log_path.name}")
 

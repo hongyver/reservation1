@@ -379,6 +379,25 @@ pane이 없어 5번째부터 **조용히 실행되지 않는다**.
 그 증상이 `login()` 의 `"로그아웃" in page_source` 검사에서 **로그인 실패로 나타난다.**
 | **런처 전용** | `--only`, `--tmux`, `--background`, `--detach`, `--dry-run` | 런처가 소비. 위임 플래그와 함께 쓰면 거부 |
 
+### 백그라운드 실행의 로그는 두 겹으로 깨진다 (`-u` + `PYTHONIOENCODING`)
+
+`run_background_fallback()`은 워커의 stdout을 `logs/<아이디>.log` 파일에 붙인다.
+파일에 붙이는 순간 두 가지가 조용히 바뀌므로 Popen에서 둘 다 되돌린다.
+
+| 바뀌는 것 | 증상 | 조치 |
+|---|---|---|
+| 라인 버퍼링 → **블록 버퍼링** | 프로세스가 끝날 때까지 로그가 **0바이트**. `terminate()` 하면 버퍼째 유실 | `sys.executable` 뒤에 `-u` |
+| stdout 인코딩 → **로케일**(Windows=cp949) | `"—"`(U+2014)에서 `UnicodeEncodeError`로 워커 사망 | `env`에 `PYTHONIOENCODING=utf-8` |
+
+tty(tmux pane·iTerm2)로 나갈 때는 둘 다 문제가 안 되므로 macOS 기본 경로에서는
+드러나지 않는다. Windows에서는 터미널 감지 실패로 background가 **기본 경로**가
+되면서 매번 노출된다.
+
+인코딩 쪽이 특히 고약하다. em dash를 찍는 자리가 하필
+`reservation_async.py`의 `"[WARN] proc.php 알 수 없는 응답 — 실패로 처리"` 라서,
+**정각에 예상 못 한 서버 응답이 왔을 때만** 워커가 죽는다. 로그를 남기려던
+줄에서 로그를 통째로 잃는 셈이다.
+
 `--background` 는 전 계정이 끝날 때까지 `proc.wait()` 로 기다리며 결과를 요약한다
 (정각에 무엇이 성공했는지 그 자리에서 보기 위해서다). 셸을 바로 돌려받으려면
 `--detach` 를 쓴다 — `start_new_session=True` 로 프로세스 그룹을 분리하므로
@@ -461,3 +480,28 @@ python3 viewer.py 2026 7   # 특정 월 지정
 뷰어는 그 경로를 쓰지 않는다).
 
 포트: 8765~8799 범위에서 사용 가능한 포트 자동 탐색.
+
+기동 시 완성된 HTML을 `<임시디렉터리>/tennis_viewer.html`에도 한 벌 떨군다
+(서버가 안 뜰 때 파일로 직접 열어보는 디버깅용이라 참조하는 코드는 없다).
+경로는 `tempfile.gettempdir()`로 얻는다 — `"/tmp"`를 하드코딩하면 Windows에서
+**현재 드라이브 루트**(`E:\tmp`)로 해석돼 폴더가 없으면 `FileNotFoundError`로
+뷰어 자체가 죽는다. 저장 실패는 경고만 찍고 넘어간다: 서버는 이미 떠 있으므로
+디버깅용 사본 때문에 뷰어를 잃을 이유가 없다.
+
+## 플랫폼 지원
+
+| | macOS / Linux | Windows |
+|---|---|---|
+| `viewer.py` · `reserve.py` · API 서버 | ○ | ○ |
+| `main.py` 전 계정 실행 | ○ | ○ (창 없이 백그라운드) |
+| `main.py` 창 분할 (tmux / iTerm2) | ○ | ✗ |
+
+런처는 Windows에서도 전 계정을 실행한다. 다만 창 분할은 iTerm2 AppleScript·tmux에
+기대고 있어 `detect_terminal_app()`이 빈손으로 돌아오고, `run_background_fallback()`
+으로 자동 전환된다 — 진행 상황은 창이 아니라 `logs/<아이디>.log`로 본다.
+Windows Terminal(`wt.exe`) 분할은 아직 붙이지 않았다.
+
+Windows 특유의 함정 두 가지는 코드가 아니라 환경에 있다 — `python`과 `python3`가
+서로 다른 인터프리터를 가리켜 한쪽에만 의존성이 설치되는 것, 그리고 옛 pip가
+`requirements.txt`의 한글 주석을 cp949로 읽어 `UnicodeDecodeError`를 내는 것.
+→ [README](README.md#windows-에서-실행)

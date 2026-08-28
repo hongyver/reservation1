@@ -20,6 +20,7 @@
 ## 1. 빠른 시작
 
 Python 3.11 이상이 필요하다 (`tomllib` 사용).
+Windows 는 [Windows 에서 실행](#windows-에서-실행) 을 먼저 본다.
 
 ```bash
 pip3 install -r requirements.txt
@@ -375,6 +376,57 @@ config.ConfigError: [설정 오류] accounts.txt 이 없습니다.
 | `--account 3` (번호) | `--account user1` (아이디) |
 
 별칭을 남기지 않았으므로 옛 플래그는 `unrecognized arguments`로 실패한다.
+
+### Windows 에서 실행
+
+`main.py` 는 Windows 에서도 전 계정을 실행한다. 다만 **창 분할만 macOS/Linux 전용**이라
+(iTerm2 AppleScript·tmux) 터미널 감지에 실패하고 백그라운드 실행으로 자동 전환된다.
+
+```
+[INFO] 터미널 에뮬레이터를 찾을 수 없음 → 백그라운드 subprocess로 전환
+```
+
+정상 동작이다. **진행 상황은 창이 아니라 로그 파일로 본다.**
+
+```
+python3 main.py --test          # 실행 (창은 열리지 않는다)
+type logs\hongyver.log          # 다른 창에서 진행 확인
+```
+
+계정 하나만 화면으로 보고 싶으면 워커를 직접 띄운다.
+
+```
+python3 reserve.py --account user1 --test
+```
+
+**`ModuleNotFoundError: No module named 'tomlkit'`**
+
+의존성이 설치되지 않은 것이다. **오류가 난 그 인터프리터에** 설치해야 한다 —
+Windows 에는 `python` 과 `python3` 가 서로 다른 파이썬인 경우가 흔하다
+(정식 설치본 vs Microsoft Store 판). `where python3` 로 확인하고 맞춰 쓴다.
+
+```
+python3 -m pip install -r requirements.txt
+```
+
+**`UnicodeDecodeError: 'cp949' codec can't decode byte ...` (pip)**
+
+`requirements.txt` 의 한글 주석을 옛 pip 가 UTF-8 이 아니라 시스템 코드페이지
+(cp949)로 읽어서 난다. pip 를 올리면 해결된다.
+
+```
+python3 -m pip install --upgrade pip
+```
+
+**`logs/*.log` 가 전부 0바이트** — 고쳤다. 원인은 두 겹이었다.
+stdout 을 파일에 붙이면 파이썬이 블록 버퍼링으로 바뀌어 프로세스가 끝날 때까지
+아무것도 쓰이지 않고, Ctrl+C 로 끊으면 버퍼째 사라진다. 여기에 Windows 는
+파일로 나가는 stdout 을 cp949 로 인코딩해서 `"—"` 한 글자에 워커가 죽는다.
+런처가 워커를 `-u` 와 `PYTHONIOENCODING=utf-8` 로 띄우도록 바꿨다.
+
+**한글이 깨져 보임** — Windows 콘솔에 직접 출력할 때는 정상이고,
+파이프·리다이렉트(`> log.txt`, Git Bash) 를 거칠 때만 깨진다. 그때는
+`PYTHONIOENCODING=utf-8` 을 준다.
 
 ### 브라우저 모드 (ChromeDriver)
 
