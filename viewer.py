@@ -461,6 +461,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .day-num{font-size:12px;font-weight:700;padding:4px 7px 2px;display:flex;justify-content:space-between;align-items:center}
 .day-num .dow-tag{font-size:9px;font-weight:500;color:#94a3b8}
 .day-num-l{display:flex;align-items:center;gap:3px}
+.day-num-r{display:flex;align-items:center;gap:4px}
+.cnt-pill{font-size:8px;font-weight:800;color:#fff;background:#6366f1;border-radius:6px;padding:0 4px;line-height:12px}
 .day-cb{width:11px;height:11px;accent-color:#6366f1;cursor:pointer;margin:0}
 .mode-search .day-cb{accent-color:#16a34a}
 .closed-badge{font-size:8px;font-weight:700;color:#dc2626;background:#fee2e2;border-radius:4px;padding:1px 3px;line-height:1}
@@ -480,6 +482,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .slot.dimmed{opacity:.08!important;pointer-events:none}
 .slot.avail{background:#dcfce7;border:1.5px solid #22c55e;color:#16a34a}
 .slot.taken{background:#f8fafc;border:1px dashed #e2e8f0;color:#cbd5e1}
+/* 배정 슬롯 위 검색 결과 — 초록 원 안의 번호=빈자리 / 빨간 테두리+×=이미 마감(그대로 두면 예약 실패)
+   × 는 빈 슬롯의 마감 표시와 같은 문자다 — '× = 마감' 으로 기호를 통일한다. */
+.slot.booked.chk-ok{background-image:radial-gradient(circle at 50% 50%,transparent 0 5.6px,#22c55e 5.6px 6.5px,rgba(255,255,255,.95) 6.5px 7.2px,transparent 7.2px)!important;font-size:7px}
+/* 중복 슬롯은 내용이 2줄이라 원을 씌울 수 없다 — 좌하단 초록 점으로 대신한다 */
+.slot.dup.chk-ok::before{content:'';position:absolute;left:1px;bottom:1px;width:4px;height:4px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 1px #fff}
+.slot.chk-no{border:1.5px solid #dc2626!important}
+/* × 를 flex 아이템으로 둬 번호와 나란히 놓는다 — 두 자리 번호와 겹치지 않는다.
+   중복 슬롯은 내용이 이미 2줄이고 자체 ⚠ 가 있어 테두리만 빨갛게 한다. */
+.slot.booked.chk-no{gap:1px;font-size:7px}
+.slot.booked.chk-no::before{content:'×';font-size:9px;font-weight:900;color:#dc2626;line-height:1;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff}
+.mini.searched-only{opacity:.62}   /* 검색만 한 날 — 결과는 읽히되 배정 있는 날보다 뒤로 */
 .mini.no-res{opacity:.28}
 .mini.no-res .slot{cursor:default}
 .mini.no-res .slot:hover{transform:none}
@@ -499,6 +512,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .leg-dup{background:#fef3c7;border:1.5px solid #f59e0b}
 .leg-avail{background:#dcfce7;border:1.5px solid #22c55e}
 .leg-taken{background:#f8fafc;border:1px dashed #e2e8f0}
+.leg-chkok{background:#3b82f6;background-image:radial-gradient(circle at 50% 50%,transparent 0 5.6px,#22c55e 5.6px 6.5px,rgba(255,255,255,.95) 6.5px 7.2px,transparent 7.2px)}
+.leg-chkno{background:#3b82f6;border:1.5px solid #dc2626;position:relative}
+.leg-chkno::before{content:'×';position:absolute;left:0;top:50%;transform:translateY(-50%);font-size:9px;font-weight:900;color:#dc2626;line-height:1;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff}
+.leg-ckd{background:#3b82f6;box-shadow:0 0 0 2px #0f172a}
 /* ── 포커스 반전 ── */
 .acct-card.fc{background:var(--c)!important;border-color:var(--c)!important}
 .acct-card.fc .acct-id,.acct-card.fc .acct-num,.acct-card.fc .acct-name,.acct-card.fc .acct-r3{color:#fff!important}
@@ -506,8 +523,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .slot.hi{outline:2px solid rgba(255,255,255,.9);z-index:5;filter:brightness(1.12)}
 .slot.dfm{opacity:.07!important;pointer-events:none}
 /* ── 슬롯 체크 ── */
-.slot.ckd{box-shadow:0 0 0 2px #22c55e!important;z-index:6}
-.slot.ckd::after{content:'✓';position:absolute;top:-6px;right:-4px;font-size:9px;color:#22c55e;font-weight:900;background:#fff;border-radius:50%;line-height:1;padding:0 1px;z-index:7}
+.slot.ckd{box-shadow:0 0 0 2px #0f172a!important;z-index:6}
+.slot.ckd::after{content:'✓';position:absolute;top:-6px;right:-4px;font-size:9px;color:#0f172a;font-weight:900;background:#fff;border-radius:50%;line-height:1;padding:0 1px;z-index:7}
 /* ── 실시간 저장 토스트 ── */
 #toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-50px);background:#1e293b;color:#fff;padding:8px 20px;border-radius:20px;font-size:13px;font-weight:600;opacity:0;transition:all .25s;z-index:9999;pointer-events:none}
 #toast.show{transform:translateX(-50%) translateY(0);opacity:1}
@@ -757,11 +774,16 @@ function buildCalendar() {
     h += `<div class="day-cell${sat?' is-sat':sun?' is-sun':''}${day===todayD?' is-today':''}">`;
     const cbTitle = selMode === 'search' ? '검색 대상 포함' : '배치 대상 포함';
     const closedBadge = closedDates.has(dateStr) ? '<span class="closed-badge">휴장</span>' : '';
-    h += `<div class="day-num${sat?' sat-n':sun?' sun-n':''}"><span class="day-num-l"><input type="checkbox" class="day-cb" ${modeDays().has(dateStr)?'checked':''} onchange="toggleDay('${dateStr}', this.checked)" title="${cbTitle}">${day}${closedBadge}</span><span class="dow-tag">${DOW[dow]}</span></div>`;
+    // 그 날 배정된 건수 (중복 슬롯은 계정 수만큼 센다 — 실제 예약 시도 횟수)
+    const nRes = cells ? Object.values(cells).reduce(
+      (s, byCt) => s + Object.values(byCt).reduce((t, a) => t + a.length, 0), 0) : 0;
+    const cntPill = nRes ? `<span class="cnt-pill" title="배정 ${nRes}건">${nRes}</span>` : '';
+    h += `<div class="day-num${sat?' sat-n':sun?' sun-n':''}"><span class="day-num-l"><input type="checkbox" class="day-cb" ${modeDays().has(dateStr)?'checked':''} onchange="toggleDay('${dateStr}', this.checked)" title="${cbTitle}">${day}${closedBadge}</span><span class="day-num-r">${cntPill}<span class="dow-tag">${DOW[dow]}</span></span></div>`;
 
-    // 예약 유무와 관계없이 모든 날짜에 미니 그리드 표시
-    // 예약 없는 날: no-res 클래스로 흐리게 처리 (검색한 날짜는 결과 표시를 위해 제외)
-    h += `<div class="mini${hasRes || searchedDates.has(dateStr) ? '' : ' no-res'}" style="grid-template-columns:${colCss}">`;
+    // 예약 유무와 관계없이 모든 날짜에 미니 그리드 표시. 밝기 3단계로
+    // "배정 있는 날 / 검색만 한 날 / 아무것도 없는 날" 을 한눈에 가른다.
+    const miniCls = hasRes ? '' : (searchedDates.has(dateStr) ? ' searched-only' : ' no-res');
+    h += `<div class="mini${miniCls}" style="grid-template-columns:${colCss}">`;
     h += '<div></div>'; // 시간 레이블 자리
     [1,2,3,4].forEach(c => h += `<div class="ct-hd">C${c}</div>`);
     ALL_HOURS.forEach(hr => {
@@ -953,28 +975,35 @@ function makeSlot(accts, dateStr, hr, ct) {
   const timeStr = `${String(hr).padStart(2,'0')}:00`;
   const oc = `onclick="clickSlot(this,'${dateStr}',${hr},${ct})"`;
 
+  // 검색 결과(= 서버의 실제 상태)는 배정 유무와 무관하게 판정한다.
+  // 배정된 슬롯도 이미 마감일 수 있으므로 계정색을 덮지 않고 위에 덧입힌다.
+  const key = `${dateStr}:${hr}:${ct}`;
+  const chk = availSlots.has(key) ? 'chk-ok'
+            : (searchedDates.has(dateStr) && !closedDates.has(dateStr)) ? 'chk-no' : '';
+  const chkTip = chk === 'chk-ok' ? '\n검색: 빈자리 ✓'
+               : chk === 'chk-no' ? '\n⚠ 검색: 마감 — 예약 실패함' : '';
+
   if (!accts.length) {
     // 검색 결과 오버레이: 빈자리 ○(초록) / 검색했지만 빈자리 아님 ×(마감)
-    const key = `${dateStr}:${hr}:${ct}`;
-    if (availSlots.has(key)) {
+    if (chk === 'chk-ok') {
       const tip = encodeURIComponent(`빈자리 (검색)\n${dateStr} ${timeStr}\n코트 ${ct}`);
       return `<div class="slot empty avail" data-a="[]" data-d="${dateStr}" data-h="${hr}" data-c="${ct}" data-tip="${tip}" ${oc}>○</div>`;
     }
-    if (searchedDates.has(dateStr) && !closedDates.has(dateStr)) {
+    if (chk === 'chk-no') {
       return `<div class="slot empty taken" data-a="[]" data-d="${dateStr}" data-h="${hr}" data-c="${ct}" ${oc}>×</div>`;
     }
     return `<div class="slot empty" data-a="[]" data-d="${dateStr}" data-h="${hr}" data-c="${ct}" ${oc}>□</div>`;
   }
   if (accts.length === 1) {
     const a = ACCOUNTS.find(x => x.num === accts[0]);
-    const tip = encodeURIComponent(`${a.user_id}${a.name ? ' (' + a.name + ')' : ''}\n${dateStr} ${timeStr}\n코트 ${ct}`);
-    return `<div class="slot booked" style="background:${a.color}" data-a='${ad}' data-d="${dateStr}" data-h="${hr}" data-c="${ct}" data-tip="${tip}" ${oc}>${a.num}</div>`;
+    const tip = encodeURIComponent(`${a.user_id}${a.name ? ' (' + a.name + ')' : ''}\n${dateStr} ${timeStr}\n코트 ${ct}${chkTip}`);
+    return `<div class="slot booked ${chk}" style="background:${a.color}" data-a='${ad}' data-d="${dateStr}" data-h="${hr}" data-c="${ct}" data-tip="${tip}" ${oc}>${a.num}</div>`;
   }
   // 중복
   const lines = accts.map(n => { const a = ACCOUNTS.find(x=>x.num===n); return `${a.num}: ${a.user_id}${a.name ? ' (' + a.name + ')' : ''}`; });
-  const tip = encodeURIComponent(`⚠ 중복 ${accts.length}건\n${lines.join('\n')}\n${dateStr} ${timeStr} 코트${ct}`);
+  const tip = encodeURIComponent(`⚠ 중복 ${accts.length}건\n${lines.join('\n')}\n${dateStr} ${timeStr} 코트${ct}${chkTip}`);
   const [n1, n2] = accts;
-  return `<div class="slot dup" data-a='${ad}' data-d="${dateStr}" data-h="${hr}" data-c="${ct}" data-tip="${tip}" ${oc}><span>${n1}</span><span>⚠${n2}</span></div>`;
+  return `<div class="slot dup ${chk}" data-a='${ad}' data-d="${dateStr}" data-h="${hr}" data-c="${ct}" data-tip="${tip}" ${oc}><span>${n1}</span><span>⚠${n2}</span></div>`;
 }
 
 /* ── 유틸: Fisher-Yates 셔플 ── */
@@ -1235,6 +1264,9 @@ def build_html(accounts, init_year, init_month, api_port=8765, settings=None):
         <span class="leg-item"><span class="leg-box leg-dup"></span>⚠ 중복</span>
         <span class="leg-item"><span class="leg-box leg-avail"></span>빈자리(검색)</span>
         <span class="leg-item"><span class="leg-box leg-taken"></span>마감(검색)</span>
+        <span class="leg-item"><span class="leg-box leg-chkok"></span>배정 + 빈자리</span>
+        <span class="leg-item"><span class="leg-box leg-chkno"></span>배정 + 마감</span>
+        <span class="leg-item"><span class="leg-box leg-ckd"></span>선택(편집 중)</span>
         <span class="leg-item" style="color:#94a3b8">ID 클릭 → 반전 &nbsp;|&nbsp; 슬롯 클릭 → 체크 → 💾 저장</span>
       </div>
     </main>
