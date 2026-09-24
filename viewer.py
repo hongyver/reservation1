@@ -1038,23 +1038,30 @@ function buildPool(targetDays, pfx) {
 function assignPool(pool, accounts, perAcct) {
   // 하드 제약: 동일 날짜 금지 — 서버가 계정당 1일 1건만 허용하므로
   // 같은 계정에 같은 날짜가 배정되면 정각에 한 건은 반드시 실패한다
+  //
+  // 라운드로빈: 한 바퀴에 계정당 1개씩, perAcct 바퀴를 돈다.
+  // 계정 순서대로 perAcct 를 다 채우면(first-fit) 풀이 모자랄 때 앞 계정이
+  // 풀을 비워 뒤 계정이 통째로 0건이 됐다 — 22계정×3개(풀 30)에서 앞 10명이
+  // 3건씩 가져가고 12명이 0건. 순서가 고정이라 매달 같은 사람이 굶었다.
+  // 바퀴로 돌면 부족분이 뒤로 몰리지 않고 계정 간 1건 차이 안에서 갈린다.
   const used = new Array(pool.length).fill(false);
-  return accounts.map(a => {
-    const slots = [];
-    const assignedDates = new Set();
+  const state = accounts.map(a => ({ account_num: a.num, slots: [], dates: new Set() }));
 
-    for (let i = 0; i < pool.length && slots.length < perAcct; i++) {
-      if (used[i]) continue;
-      const s = pool[i];
-      if (!assignedDates.has(s.date)) {
-        slots.push(s);
-        assignedDates.add(s.date);
+  for (let round = 0; round < perAcct; round++) {
+    for (const st of state) {
+      for (let i = 0; i < pool.length; i++) {
+        if (used[i]) continue;
+        const s = pool[i];
+        if (st.dates.has(s.date)) continue;
+        st.slots.push(s);
+        st.dates.add(s.date);
         used[i] = true;
+        break;
       }
     }
+  }
 
-    return { account_num: a.num, slots };
-  });
+  return state.map(st => ({ account_num: st.account_num, slots: st.slots }));
 }
 
 /* ── 필요 수: 체크된 배치 날짜 수요 ── */
