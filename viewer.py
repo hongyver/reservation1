@@ -124,6 +124,7 @@ class _APIHandler(BaseHTTPRequestHandler):
 
     GET /          → HTML 페이지 서빙 (same-origin으로 CORS 완전 해소)
     POST /api/save-schedule → reservation.json 전체 교체 ([저장] 버튼)
+    POST /api/report        → 계획 vs 계정별 실제 대관 내역 대조 ([Report] 버튼)
     """
 
     def log_message(self, *_):
@@ -192,6 +193,19 @@ class _APIHandler(BaseHTTPRequestHandler):
                     result = search_dates_availability(dates)
                 except Exception as e:
                     result = {"ok": False, "error": str(e)}
+            payload = json.dumps(result, ensure_ascii=False).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", len(payload))
+            self._cors()
+            self.end_headers()
+            self.wfile.write(payload)
+
+        elif self.path == "/api/report":
+            try:
+                result = check_actual_reservations()
+            except Exception as e:
+                result = {"ok": False, "error": str(e)}
             payload = json.dumps(result, ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -380,6 +394,193 @@ def search_dates_availability(dates):
     return asyncio.run(_run())
 
 
+# ─── 예약 대조 (Report) ───────────────────────────────────────────────────────
+
+RENT_HISTORY_PATH = "/mypage/rentacc.php"   # 마이페이지 > 대관처리 및 결제
+REPORT_MAX_PAGES = 5                        # 페이지당 10건, 신청일 내림차순
+
+
+def parse_rent_history(html):
+    """대관 내역 페이지에서 예약 행을 뽑는다.
+
+    행 구조 (2026-09 실측, td 5개):
+      [신청일<br>신청번호] [성저테니스장<br>N코트(성저테니스)]
+      [YYYY년 MM월 DD일 … ( HH 시 ~ HH 시 )] [상태] [비고]
+    colspan 제목 행("고양스포츠타운")과 테니스 외 행은 건너뛴다.
+
+    Returns: [{"applied", "date", "hour", "court", "status"}]
+    """
+    import re
+    from bs4 import BeautifulSoup
+
+    table = BeautifulSoup(html, "html.parser").find("table", class_="mypage_table")
+    if not table:
+        return []
+    rows = []
+    for tr in table.find_all("tr"):
+        tds = tr.find_all("td")
+        if len(tds) != 5:
+            continue
+        applied = re.search(r"\d{4}-\d{2}-\d{2}", tds[0].get_text(" "))
+        court = re.search(r"(\d)\s*코트", tds[1].get_text(" "))
+        period = tds[2].get_text(" ")
+        date = re.search(r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일", period)
+        hour = re.search(r"\(\s*(\d{1,2})\s*시\s*~", period)
+        if not (applied and court and date and hour):
+            continue
+        y, m, d = date.groups()
+        rows.append({
+            "applied": applied.group(),
+            "date": f"{y}-{int(m):02d}-{int(d):02d}",
+            "hour": int(hour.group(1)),
+            "court": int(court.group(1)),
+            "status": " ".join(tds[3].get_text(" ").split()),
+        })
+    return rows
+
+
+def load_open_timing_messages():
+    """정각 실행 타이밍 로그에서 슬롯별 마지막 결과를 모은다 (실패 사유 표시용).
+
+    --test 기록도 같은 파일 형식이라 섞여 있다. fire_ts 가 설정된 오픈 시각
+    (N일 HH:MM)인 기록만 쓴다 — 그렇지 않으면 리허설의 "미오픈 날짜" 가
+    실전 실패 사유처럼 보인다.
+
+    Returns: {(user_id, date, hour, court): {"success", "message", "fire_ts"}}
+    """
+    tail = f"T{config.RESERVATION_HOUR:02d}:{config.RESERVATION_MINUTE:02d}"
+    if config.RESERVATION_DAY:
+        tail = f"-{config.RESERVATION_DAY:02d}{tail}"
+
+    out = {}
+    for f in (Path(__file__).parent / "logs").glob("timing_*.jsonl"):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(line)
+                key = (r["user_id"], r["date"], int(r["hour"]), int(r["court"]))
+                fire_ts = r.get("fire_ts") or ""
+            except (ValueError, KeyError, TypeError):
+                continue
+            if tail not in fire_ts[:16]:
+                continue
+            if key not in out or fire_ts > out[key]["fire_ts"]:
+                out[key] = {"success": r.get("success"), "message": r.get("message", ""),
+                            "fire_ts": fire_ts}
+    return out
+
+
+def _miss_reason(uid, s, history, logs):
+    """계획엔 있는데 실제 예약이 없는 슬롯의 사유 — 사이트 기록 → 로그 순."""
+    same = [r for r in history
+            if (r["date"], r["hour"], r["court"]) == (s["date"], s["hour"], s["court"])]
+    if same:
+        return f"사이트: {same[0]['status']}"   # 잡았다가 취소된 경우
+    log = logs.get((uid, s["date"], s["hour"], s["court"]))
+    if not log:
+        return "사유 미상 (이 PC에 정각 실행 로그 없음)"
+    if log["success"]:
+        return f"로그상 성공({log['message']}) — 이후 취소·삭제 추정"
+    return log["message"]
+
+
+def check_actual_reservations():
+    """reservation.json(저장본) 계획과 계정별 실제 대관 내역을 대조한다 (읽기 전용).
+
+    취소가 아닌 건은 결제 여부와 무관하게 예약으로 본다 (신청 건 포함).
+
+    Returns: {"ok", "generated_at", "items", "accounts", "elapsed"}
+      items: [{"id", "date", "hour", "court", "kind", "status", "reason"}]
+        kind = ok(계획대로 예약됨) | missing(계획됐지만 없음)
+             | extra(계획 밖 예약, 계획이 걸친 월만) | unknown(로그인·조회 실패)
+      accounts: {id: {"planned", "ok", "missing", "extra", "error"}}
+    """
+    import asyncio
+    import time
+    from datetime import date, timedelta
+    from urllib.parse import urljoin
+
+    from reservation_async import TennisReservationAsync
+
+    config.reload()
+    try:
+        plan = schedule.load()
+    except schedule.ScheduleError as e:
+        return {"ok": False, "error": str(e)}
+    logs = load_open_timing_messages()
+    t0 = time.time()
+
+    async def fetch_history(bot, earliest):
+        """신청일 내림차순이므로 첫 계획일보다 40일 넘게 앞선 신청이 나오면 멈춘다."""
+        cutoff = (date.fromisoformat(earliest) - timedelta(days=40)).isoformat()
+        url = urljoin(config.MAIN_URL, RENT_HISTORY_PATH)
+        rows = []
+        for page in range(1, REPORT_MAX_PAGES + 1):
+            html = await bot._request_with_retry("GET", url, params={"page": page},
+                                                 max_retries=3)
+            got = parse_rent_history(html)
+            rows += got
+            if not got or got[-1]["applied"] < cutoff:
+                break
+        return rows
+
+    async def check(entry, sem):
+        uid, slots = entry["id"], entry["slots"]
+        async with sem:
+            async with TennisReservationAsync() as bot:
+                if not await bot.login(uid, entry["user_pw"]):
+                    return uid, None, "로그인 실패"
+                try:
+                    return uid, await fetch_history(bot, min(s["date"] for s in slots)), None
+                except Exception as e:
+                    return uid, None, f"내역 조회 실패: {e}"
+
+    async def _run():
+        sem = asyncio.Semaphore(3)
+        return await asyncio.gather(*(check(e, sem) for e in plan["entries"]))
+
+    results = asyncio.run(_run())
+    slots_by_id = {e["id"]: e["slots"] for e in plan["entries"]}
+
+    items, accounts = [], {}
+    for uid, history, error in results:
+        slots = slots_by_id[uid]
+        summary = {"planned": len(slots), "ok": 0, "missing": 0, "extra": 0, "error": error}
+        accounts[uid] = summary
+        if history is None:
+            items += [{"id": uid, **s, "kind": "unknown", "status": "", "reason": error}
+                      for s in slots]
+            continue
+
+        live = {(r["date"], r["hour"], r["court"]): r
+                for r in history if "취소" not in r["status"]}
+        planned = set()
+        for s in slots:
+            k = (s["date"], s["hour"], s["court"])
+            planned.add(k)
+            if k in live:
+                kind, status, reason = "ok", live[k]["status"], ""
+            else:
+                kind, status, reason = "missing", "", _miss_reason(uid, s, history, logs)
+            summary[kind] += 1
+            items.append({"id": uid, **s, "kind": kind, "status": status, "reason": reason})
+
+        months = {s["date"][:7] for s in slots}
+        for k, r in live.items():
+            if k not in planned and r["date"][:7] in months:
+                summary["extra"] += 1
+                items.append({"id": uid, "date": r["date"], "hour": r["hour"],
+                              "court": r["court"], "kind": "extra",
+                              "status": r["status"], "reason": "계획에 없는 예약"})
+
+    return {
+        "ok": True,
+        "generated_at": plan["generated_at"],
+        "items": items,
+        "accounts": accounts,
+        "elapsed": round(time.time() - t0, 1),
+    }
+
+
 # ─── HTML 생성 ────────────────────────────────────────────────────────────────
 
 _CSS = """
@@ -516,6 +717,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .leg-chkno{background:#3b82f6;border:1.5px solid #dc2626;position:relative}
 .leg-chkno::before{content:'×';position:absolute;left:0;top:50%;transform:translateY(-50%);font-size:9px;font-weight:900;color:#dc2626;line-height:1;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff}
 .leg-ckd{background:#3b82f6;box-shadow:0 0 0 2px #0f172a}
+.leg-rep{position:relative}
+/* ── Report (계획 vs 실제) ──
+   배지는 자식 요소로 둔다 — ::before(검색 ×)·::after(편집 ✓)가 이미 쓰이고 있다. */
+.rep-b{position:absolute;top:-5px;left:-4px;width:10px;height:10px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:900;font-style:normal;line-height:1;color:#fff;text-shadow:none;box-shadow:0 0 0 1px #fff;z-index:7;pointer-events:none}
+.rep-b.ok{background:#16a34a}.rep-b.miss{background:#dc2626}.rep-b.unk{background:#f59e0b}.rep-b.extra{background:#7c3aed}
+.slot.rep-miss{outline:2px solid #dc2626;outline-offset:0}
+.slot.rep-unk{outline:2px dashed #f59e0b;outline-offset:0}
+.slot.rep-ghost{background:#faf5ff;border:1.5px dashed #7c3aed;color:#7c3aed;font-size:7px}
+.slot.rep-ghost.rep-miss,.slot.rep-ghost.rep-unk{background:#fef2f2;border-color:#dc2626;color:#dc2626;outline:none}
+.leg-box.rep-miss{outline:2px solid #dc2626}
+.leg-box.rep-ghost{background:#faf5ff;border:1.5px dashed #7c3aed}
+.rep-cnt{font-weight:800;font-size:10px;padding:0 4px;border-radius:4px;line-height:15px;color:#14532d;background:#bbf7d0}
+.rep-cnt.bad{color:#7f1d1d;background:#fecaca}
 /* ── 포커스 반전 ── */
 .acct-card.fc{background:var(--c)!important;border-color:var(--c)!important}
 .acct-card.fc .acct-id,.acct-card.fc .acct-num,.acct-card.fc .acct-name,.acct-card.fc .acct-r3{color:#fff!important}
@@ -548,6 +762,9 @@ let availSlots = new Set();        // 검색 결과 빈자리 "YYYY-MM-DD:시간
 let closedDates = new Set();       // 휴장일 추정 날짜 "YYYY-MM-DD"
 let searchedDates = new Set();     // 검색을 수행한 날짜 "YYYY-MM-DD"
 let searching = false;             // 검색 진행 중 플래그
+let reportMap = {};                // Report 결과 "YYYY-MM-DD:시간:코트" → [{num, id, kind, status, reason}]
+let reportAcct = {};               // Report 계정별 요약 user_id → {planned, ok, missing, extra, error}
+let reporting = false;             // Report 진행 중 플래그
 
 /* ── 초기화 ── */
 (function init() {
@@ -586,7 +803,7 @@ function buildSidebar() {
     <input type="password" id="pw${a.num}" value="${a.user_pw}" class="pw-box" readonly>
     <button class="pw-eye" onclick="togglePw(${a.num})" title="비밀번호 보기">👁</button>
   </div>
-  <div class="acct-r3"><span${keptHint(a)}>📅 ${planCount(a)}건</span>${deltaBadge(a.num)}</div>
+  <div class="acct-r3"><span${keptHint(a)}>📅 ${planCount(a)}건</span>${deltaBadge(a.num)}${reportBadge(a)}</div>
 </div>`;
     }).join('');
 }
@@ -613,6 +830,16 @@ function deltaBadge(num) {
   if (c.d < 0)  return `<span class="cnt-delta down" title="재배치로 ${-c.d}건 줄어듦">▼${-c.d}</span>`;
   if (c.moved)  return `<span class="cnt-delta move" title="건수는 같지만 배정된 슬롯이 바뀜">↻</span>`;
   return `<span class="cnt-delta same" title="재배치했지만 배정이 그대로">=</span>`;
+}
+
+/* Report 결과 배지 — 실제 예약 수 / 저장된 계획 수 (+계획 외) */
+function reportBadge(a) {
+  const s = reportAcct[a.user_id];
+  if (!s) return '';
+  if (s.error) return `<span class="rep-cnt bad" title="${esc(s.error)}">실제 ?</span>`;
+  const extra = s.extra ? ` +${s.extra}` : '';
+  const tip = `계획 ${s.planned}건 중 실제 ${s.ok}건` + (s.extra ? ` · 계획 외 ${s.extra}건` : '');
+  return `<span class="rep-cnt${s.ok < s.planned ? ' bad' : ''}" title="${tip}">실제 ${s.ok}/${s.planned}${extra}</span>`;
 }
 
 function toggleAcct(num) {
@@ -749,6 +976,7 @@ function buildCalendar() {
   document.getElementById('tip').classList.remove('show');
   document.getElementById('mtitle').textContent = `${CY}년 ${CM}월`;
   const sm = slotMap();
+  const reportDates = new Set(Object.keys(reportMap).map(k => k.slice(0, 10)));
   const today = new Date();
   const todayD = (today.getFullYear()===CY && today.getMonth()+1===CM) ? today.getDate() : -1;
 
@@ -782,7 +1010,7 @@ function buildCalendar() {
 
     // 예약 유무와 관계없이 모든 날짜에 미니 그리드 표시. 밝기 3단계로
     // "배정 있는 날 / 검색만 한 날 / 아무것도 없는 날" 을 한눈에 가른다.
-    const miniCls = hasRes ? '' : (searchedDates.has(dateStr) ? ' searched-only' : ' no-res');
+    const miniCls = (hasRes || reportDates.has(dateStr)) ? '' : (searchedDates.has(dateStr) ? ' searched-only' : ' no-res');
     h += `<div class="mini${miniCls}" style="grid-template-columns:${colCss}">`;
     h += '<div></div>'; // 시간 레이블 자리
     [1,2,3,4].forEach(c => h += `<div class="ct-hd">C${c}</div>`);
@@ -983,6 +1211,21 @@ function makeSlot(accts, dateStr, hr, ct) {
   const chkTip = chk === 'chk-ok' ? '\n검색: 빈자리 ✓'
                : chk === 'chk-no' ? '\n⚠ 검색: 마감 — 예약 실패함' : '';
 
+  // Report 결과(= 계정별 실제 예약)도 검색과 별개로 덧입힌다.
+  // 배정된 계정의 결과는 배지로, 달력에 없는 계정의 결과(계획 외 예약·
+  // 저장 후 옮긴 슬롯)는 빈 슬롯 자리에 유령 슬롯으로 보인다.
+  const rep = reportMap[key] || [];
+  const mine = rep.filter(x => accts.includes(x.num));
+  const others = rep.filter(x => !accts.includes(x.num));
+  const repTip = rep.length ? '\n' + rep.map(repLine).join('\n') : '';
+  const badge = mine.length ? repBadge(mine) : '';
+
+  if (!accts.length && others.length) {
+    const w = repWorst(others);
+    const tip = encodeURIComponent(`Report\n${dateStr} ${timeStr}\n코트 ${ct}${repTip}`);
+    return `<div class="slot empty rep-ghost rep-${w}" data-a="[]" data-d="${dateStr}" data-h="${hr}" data-c="${ct}" data-tip="${tip}" ${oc}>${others.map(x => x.num).join(',')}</div>`;
+  }
+
   if (!accts.length) {
     // 검색 결과 오버레이: 빈자리 ○(초록) / 검색했지만 빈자리 아님 ×(마감)
     if (chk === 'chk-ok') {
@@ -996,14 +1239,44 @@ function makeSlot(accts, dateStr, hr, ct) {
   }
   if (accts.length === 1) {
     const a = ACCOUNTS.find(x => x.num === accts[0]);
-    const tip = encodeURIComponent(`${a.user_id}${a.name ? ' (' + a.name + ')' : ''}\n${dateStr} ${timeStr}\n코트 ${ct}${chkTip}`);
-    return `<div class="slot booked ${chk}" style="background:${a.color}" data-a='${ad}' data-d="${dateStr}" data-h="${hr}" data-c="${ct}" data-tip="${tip}" ${oc}>${a.num}</div>`;
+    const tip = encodeURIComponent(`${a.user_id}${a.name ? ' (' + a.name + ')' : ''}\n${dateStr} ${timeStr}\n코트 ${ct}${chkTip}${repTip}`);
+    return `<div class="slot booked ${chk}${mine.length ? ' rep-' + repWorst(mine) : ''}" style="background:${a.color}" data-a='${ad}' data-d="${dateStr}" data-h="${hr}" data-c="${ct}" data-tip="${tip}" ${oc}>${a.num}${badge}</div>`;
   }
   // 중복
   const lines = accts.map(n => { const a = ACCOUNTS.find(x=>x.num===n); return `${a.num}: ${a.user_id}${a.name ? ' (' + a.name + ')' : ''}`; });
-  const tip = encodeURIComponent(`⚠ 중복 ${accts.length}건\n${lines.join('\n')}\n${dateStr} ${timeStr} 코트${ct}${chkTip}`);
+  const tip = encodeURIComponent(`⚠ 중복 ${accts.length}건\n${lines.join('\n')}\n${dateStr} ${timeStr} 코트${ct}${chkTip}${repTip}`);
   const [n1, n2] = accts;
-  return `<div class="slot dup ${chk}" data-a='${ad}' data-d="${dateStr}" data-h="${hr}" data-c="${ct}" data-tip="${tip}" ${oc}><span>${n1}</span><span>⚠${n2}</span></div>`;
+  return `<div class="slot dup ${chk}${mine.length ? ' rep-' + repWorst(mine) : ''}" data-a='${ad}' data-d="${dateStr}" data-h="${hr}" data-c="${ct}" data-tip="${tip}" ${oc}><span>${n1}</span><span>⚠${n2}</span>${badge}</div>`;
+}
+
+/* ── Report 오버레이 ── */
+const REP_RANK = { miss: 3, unk: 2, extra: 1, ok: 0 };
+const REP_KIND = { missing: 'miss', unknown: 'unk', extra: 'extra', ok: 'ok' };
+const REP_MARK = { miss: '✗', unk: '?', extra: '+', ok: '✓' };
+
+/* 한 슬롯에 여러 계정 결과가 겹치면 가장 나쁜 것을 보인다 */
+function repWorst(items) {
+  return items.map(x => REP_KIND[x.kind])
+              .reduce((w, k) => REP_RANK[k] > REP_RANK[w] ? k : w, 'ok');
+}
+
+function repBadge(items) {
+  const w = repWorst(items);
+  return `<i class="rep-b ${w}">${REP_MARK[w]}</i>`;
+}
+
+/* 툴팁 한 줄 — ⚠ 로 시작하면 강조 표시된다 (bindTips) */
+function repLine(x) {
+  const who = `${x.num}: ${x.id}`;
+  if (x.kind === 'ok')      return `📋 ${who} 실제 예약 ✓ (${esc(x.status)})`;
+  if (x.kind === 'extra')   return `📋 ${who} 계획 외 예약 (${esc(x.status)})`;
+  if (x.kind === 'unknown') return `⚠ ${who} 확인 불가 — ${esc(x.reason)}`;
+  return `⚠ ${who} 실제 예약 없음 — ${esc(x.reason)}`;
+}
+
+function esc(t) {
+  return String(t ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
 /* ── 유틸: Fisher-Yates 셔플 ── */
@@ -1185,6 +1458,44 @@ async function runSearch() {
   }
 }
 
+/* ── Report: 저장된 계획 vs 계정별 실제 예약 ── */
+async function runReport() {
+  if (reporting) return;
+  reporting = true;
+  const btn = document.getElementById('reportBtn');
+  const orig = btn.textContent;
+  btn.textContent = '⏳ 대조 중…';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/report', { method: 'POST' });
+    const r = await resp.json();
+    if (!r.ok) { showToast('✗ Report 실패: ' + (r.error || ''), true); return; }
+
+    const numOf = Object.fromEntries(ACCOUNTS.map(a => [a.user_id, a.num]));
+    reportMap = {};
+    r.items.forEach(x => {
+      (reportMap[`${x.date}:${x.hour}:${x.court}`] ??= []).push({ ...x, num: numOf[x.id] ?? '?' });
+    });
+    reportAcct = r.accounts;
+    buildSidebar();
+    buildCalendar();
+
+    const n = k => r.items.filter(x => x.kind === k).length;
+    const planned = r.items.filter(x => x.kind !== 'extra').length;
+    const failed = Object.values(r.accounts).filter(s => s.error).length;
+    const note = dirty ? ' · ⚠ 미저장 변경은 대조에서 빠짐' : '';
+    showToast(`📋 ${Object.keys(r.accounts).length}계정 · 계획 ${planned} · 성공 ${n('ok')} · 누락 ${n('missing')}`
+      + ` · 계획외 ${n('extra')}${failed ? ` · 조회실패 ${failed}계정` : ''} · ${r.elapsed}초${note}`,
+      n('missing') + failed > 0);
+  } catch (e) {
+    showToast('✗ 연결 오류', true);
+  } finally {
+    reporting = false;
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+}
+
 /* ── 툴팁 ── */
 function bindTips() {
   const tip = document.getElementById('tip');
@@ -1239,6 +1550,7 @@ def build_html(accounts, init_year, init_month, api_port=8765, settings=None):
       <button id="btnSelAll" onclick="selectAll(true)">계정 전체 선택</button>
       <button id="btnDeselAll" onclick="selectAll(false)">계정 전체 해제</button>
       <button id="searchBtn" onclick="runSearch()" style="background:rgba(22,163,74,.35);border-color:rgba(22,163,74,.7)">🔍 검색</button>
+      <button id="reportBtn" onclick="runReport()" title="reservation.json(저장본) 계획과 계정별 실제 예약을 대조" style="background:rgba(234,88,12,.35);border-color:rgba(234,88,12,.7)">📋 Report</button>
       <button id="redistBtn" onclick="redistribute()" style="background:rgba(99,102,241,.35);border-color:rgba(99,102,241,.7)">🔀 재배치</button>
       <button id="saveBtn" onclick="saveSchedule()" title="reservation.json 에 저장">💾 저장</button>
     </div>
@@ -1267,6 +1579,9 @@ def build_html(accounts, init_year, init_month, api_port=8765, settings=None):
         <span class="leg-item"><span class="leg-box leg-chkok"></span>배정 + 빈자리</span>
         <span class="leg-item"><span class="leg-box leg-chkno"></span>배정 + 마감</span>
         <span class="leg-item"><span class="leg-box leg-ckd"></span>선택(편집 중)</span>
+        <span class="leg-item"><span class="leg-box leg-booked leg-rep"><i class="rep-b ok">✓</i></span>실제 예약됨</span>
+        <span class="leg-item"><span class="leg-box leg-booked leg-rep rep-miss"><i class="rep-b miss">✗</i></span>계획대로 안 됨</span>
+        <span class="leg-item"><span class="leg-box leg-rep rep-ghost rep-extra"></span>계획 외 예약</span>
         <span class="leg-item" style="color:#94a3b8">ID 클릭 → 반전 &nbsp;|&nbsp; 슬롯 클릭 → 체크 → 💾 저장</span>
       </div>
     </main>
