@@ -1206,10 +1206,6 @@ function makeSlot(accts, dateStr, hr, ct) {
   // 검색 결과(= 서버의 실제 상태)는 배정 유무와 무관하게 판정한다.
   // 배정된 슬롯도 이미 마감일 수 있으므로 계정색을 덮지 않고 위에 덧입힌다.
   const key = `${dateStr}:${hr}:${ct}`;
-  const chk = availSlots.has(key) ? 'chk-ok'
-            : (searchedDates.has(dateStr) && !closedDates.has(dateStr)) ? 'chk-no' : '';
-  const chkTip = chk === 'chk-ok' ? '\n검색: 빈자리 ✓'
-               : chk === 'chk-no' ? '\n⚠ 검색: 마감 — 예약 실패함' : '';
 
   // Report 결과(= 계정별 실제 예약)도 검색과 별개로 덧입힌다.
   // 배정된 계정의 결과는 배지로, 달력에 없는 계정의 결과(계획 외 예약·
@@ -1217,6 +1213,18 @@ function makeSlot(accts, dateStr, hr, ct) {
   const rep = reportMap[key] || [];
   const mine = rep.filter(x => accts.includes(x.num));
   const others = rep.filter(x => !accts.includes(x.num));
+
+  // 검색의 '마감' 은 누가 잡았는지 모른다 — 오픈 후엔 본인이 잡아서 마감인 경우가 대부분이다.
+  // Report 로 본인 예약이 확인되면 × 를 붙이지 않는다.
+  const mineOk = mine.some(x => x.kind === 'ok');
+  let chk = availSlots.has(key) ? 'chk-ok'
+          : (searchedDates.has(dateStr) && !closedDates.has(dateStr)) ? 'chk-no' : '';
+  let chkTip = chk === 'chk-ok' ? '\n검색: 빈자리 ✓'
+             : chk === 'chk-no' ? '\n⚠ 검색: 마감 (이미 예약 있음 — 본인 예약인지는 Report로 확인)' : '';
+  if (chk === 'chk-no' && mineOk) {
+    chk = '';
+    chkTip = '\n검색: 마감 (본인 예약 ✓)';
+  }
   const repTip = rep.length ? '\n' + rep.map(repLine).join('\n') : '';
   const badge = mine.length ? repBadge(mine) : '';
 
