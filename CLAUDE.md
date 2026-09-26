@@ -459,6 +459,16 @@ python3 viewer.py 2026 7   # 특정 월 지정
   - 날짜 기본 선택은 토·일·공휴일 — 공휴일 판정은 `holidays` 패키지(KR, 대체공휴일·음력 포함), 미설치 시 주말만 기본 선택
   - 재배치 확인 대화상자도 같은 비교(용량 < 선택일 수요 시 ⚠ 경고)를 사용
 - **빈자리 검색** (검색 모드): 체크된 날짜의 실제 예약 가능 여부를 사이트에서 조회하여 달력에 표시
+- **Report** (📋, 모드 무관): `reservation.json` **저장본** 계획을 계정별 실제 대관 내역과 대조
+  - 데이터: 계정마다 로그인 → `/mypage/rentacc.php?page=N` (`table.mypage_table`, 신청일 내림차순 10건/쪽).
+    첫 계획일 −40일보다 오래된 신청이 나오거나 5쪽이면 멈춘다
+  - 판정: 상태에 `취소`가 없으면 **결제 여부와 무관하게 예약됨** (신청 건 포함)
+  - 슬롯 표시: ✓ 실제 예약됨 / ✗ 계획대로 안 됨(빨간 외곽선) / ? 로그인·조회 실패 /
+    보라 점선 = 계획 외 예약(계획이 걸친 월만). 사이드바에 `실제 ok/계획 +계획외`
+  - 누락 사유 우선순위: 사이트에 같은 슬롯 취소 행 → 정각 타이밍 로그 `message` →
+    "이 PC에 로그 없음" (다른 PC에서 돌린 계정). 로그는 `fire_ts` 가 `[schedule]`
+    오픈 시각(N일 HH:MM)인 것만 쓴다 — `--test` 기록이 같은 파일 형식으로 섞여 있어서다
+  - 미저장 편집은 대조에 들어가지 않는다 (토스트에 경고)
 - **헤더 설정**: 로그인 시작 시점(분)·계정당 배정 개수 입력 → 변경 즉시 `config.toml`에 저장
 
 ### 내장 HTTP 서버
@@ -471,6 +481,7 @@ python3 viewer.py 2026 7   # 특정 월 지정
 - `POST /api/redistribute` → 재배치 결과 일괄 저장 (전달된 계정만 예약 교체)
   - 저장 전 `config.toml.bak.YYYYMMDD_HHMMSS` 자동 백업 (뷰어 시작 시에도 1회)
 - `POST /api/search` → 날짜별 빈자리 조회 (사이트 실시간 조회)
+- `POST /api/report` → 계획 vs 실제 대관 내역 대조 (`check_actual_reservations()`, 읽기 전용)
 - `POST /api/save-login-advance` → `[schedule] login_advance_minutes` 저장
 - `POST /api/save-slots-per-account` → `[schedule] slots_per_account` 저장
 
