@@ -316,7 +316,7 @@ class TennisReservationHTTP:
 
                 # 필수 필드 설정 (JavaScript checkIt() 함수 참조)
                 form_data["regno"] = "0000000000000"
-                form_data["com_nm"] = form_data.get("com_nm") or "개인"
+                form_data["com_nm"] = form_data.get("com_nm", "")
                 form_data["apply_chk2"] = "1"
                 form_data["apply_chk"] = "1"
 

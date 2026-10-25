@@ -426,7 +426,7 @@ class TennisReservationAsync:
 
                 # 필수 필드 설정
                 form_data["regno"] = "0000000000000"
-                form_data["com_nm"] = form_data.get("com_nm") or "개인"
+                form_data["com_nm"] = form_data.get("com_nm", "")
                 form_data["apply_chk2"] = "1"
                 form_data["apply_chk"] = "1"
                 form_data["stime"] = time_value[:2]
